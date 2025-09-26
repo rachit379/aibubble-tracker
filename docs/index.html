@@ -2,42 +2,70 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <title>AI Bubble Tracker – free</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AI Bubble Tracker – Free Dashboard</title>
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <style>
-    body{font-family:Arial,Helvetica,sans-serif;margin:0 auto;max-width:900px;padding:2rem}
-    h2{text-align:center}
+    :root{--green:#28a745;--amber:#fd7e14;--red:#dc3545}
+    body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+         margin:0;padding:2rem 1rem;background:#f7f9fc;color:#111}
+    .card{max-width:800px;margin:auto;background:#fff;border-radius:8px;
+          box-shadow:0 4px 12px rgba(0,0,0,.08);padding:2rem}
+    h2{margin-top:0;text-align:center;font-size:1.4rem}
+    .legend{display:flex;justify-content:center;gap:1.5rem;margin:.5rem 0 1.5rem;font-size:.9rem}
+    .legend span{display:flex;align-items:center;gap:.25rem}
+    .legend .box{width:14px;height:14px;border-radius:2px}
+    .green{background:var(--green)}.amber{background:var(--amber)}.red{background:var(--red)}
+    #myChart{max-height:340px}
+    .note{text-align:center;font-size:.8rem;color:#555;margin-top:1rem}
   </style>
 </head>
 <body>
-  <h2>AI Bubble Composite z-score</h2>
-  <canvas id="myChart" height="120"></canvas>
-  <p style="text-align:center">
-    <span style="color:green">■</span> Green ≤1 σ
-    <span style="color:orange">■</span> Amber 1-2 σ
-    <span style="color:red">■</span> Red &gt;2 σ
-  </p>
+  <div class="card">
+    <h2>AI Bubble Composite z-score</h2>
+    <div class="legend">
+      <span><span class="box green"></span> Green ≤1 σ</span>
+      <span><span class="box amber"></span> Amber 1-2 σ</span>
+      <span><span class="box red"></span> Red &gt;2 σ</span>
+    </div>
+    <canvas id="myChart"></canvas>
+    <p class="note">Updates daily ~09:15 ET.  Hover / touch the chart to see exact values.</p>
+  </div>
+
   <script>
   fetch('data.csv?'+Date.now())
     .then(r=>r.text())
     .then(txt=>{
-      const [head,...rows] = txt.trim().split('\n');
-      const labels = rows.map(r=>r.split(',')[0]);
-      const data   = rows.map(r=>parseFloat(r.split(',')[10]));
+      const[,...rows]=txt.trim().split('\n');
+      const labels=rows.map(r=>r.split(',')[0]);
+      const data  =rows.map(r=>+r.split(',')[10]);
       new Chart(document.getElementById('myChart'),{
         type:'line',
         data:{
-          labels:labels,
+          labels,
           datasets:[{
             label:'Composite z-score',
-            data:data,
-            segment:{borderColor:ctx=>ctx.p0.parsed.y>2?'red':ctx.p0.parsed.y>1?'orange':'green'},
-            tension:0.3,
-            fill:false,
-            pointRadius:3
+            data,
+            borderColor: ctx=>{
+              const v=ctx.p0.parsed.y;
+              return v>2?'var(--red)':v>1?'var(--amber)':'var(--green)';
+            },
+            backgroundColor: ctx=>{
+              const v=ctx.p0.parsed.y;
+              return v>2?'rgba(220,53,69,.1)':v>1?'rgba(253,126,20,.1)':'rgba(40,167,69,.1)';
+            },
+            tension:.3,
+            fill:true,
+            pointRadius:4,
+            pointHoverRadius:6
           }]
         },
-        options:{scales:{y:{min:-5,max:+5}}}
+        options:{
+          responsive:true,
+          maintainAspectRatio:false,
+          scales:{y:{min:-5,max:5,grid:{color:'rgba(0,0,0,.06)'},ticks:{font:{size:12}}}},
+          plugins:{legend:{display:false},tooltip:{mode:'index',intersect:false}}
+        }
       });
     });
   </script>
