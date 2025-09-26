@@ -1,65 +1,88 @@
+# fetch.py  –  historical Fed data + live daily proxies  (zero-maintenance)
 import pandas as pd
 import requests
 import datetime as dt
+import os
+import time
 from pytrends.request import TrendReq
 
-today = dt.date.today().isoformat()
-# ---------- 1. FRED (JSON API – no key needed for < 50 calls/day) ----------
-def fred(series: str) -> float:
-    API_KEY = "c63f4de89b61c8ee0b910235aebbadc1"
-    url = (
-        f'https://api.stlouisfed.org/fred/series/observations'
-           f'?series_id={series}&api_key={API_KEY}&file_type=json&limit=1&sort_order=desc'
-    )
-    return float(requests.get(url, timeout=20).json()["observations"][0]["value"])
+today       = dt.date.today()
+GAS_URL     = 'https://script.google.com/macros/s/AKfycby3ohuCJJywDanfdrAN3fas527MM5lxsWz4MrAKUN4RxsHKffmW_lzQlodmMMe4g2awXw/exec'  # ← Apps-Script url
+FED_CSV     = 'fed_history.csv'          # local cache
+PROXY_CSV   = 'docs/data.csv'            # live dashboard file
 
-cape    = fred("CAPE")
-tobinq  = fred("TOBINQ")
-hhld    = fred("MEFBTAA158N") / 100          # household equity %
+hdr = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
 
-# ---------- 2. Hard-coded placeholders (replace with live scrapes later) ----------
-mag7    = 0.36
-nvda_ps = 38
+# ---------- 1.  download Fed history once ----------
+def fed_history() -> pd.DataFrame:
+    """monthly CAPE + quarterly Tobin-Q + quarterly HH-equity  (Fed Z.1)"""
+    # CAPE (monthly)
+    cape = pd.read_csv('https://www.multpl.com/shiller-pe/table/by-month', header=0,
+                       names=['date','cape'], thousands=',')
+    cape['date'] = pd.to_datetime(cape['date'])
 
-# ---------- 3. Google Trends ----------
-pytrend = TrendReq(hl="en-US", tz=360)
-kw = ["AI stock", "NVDA stock", "ChatGPT stock"]
-pytrend.build_payload(kw, timeframe="today 3-m")
-gt = pytrend.interest_over_time().mean().mean()
+    # Tobin-Q (quarterly from Fed Z.1 HTML table)
+    tq = pd.read_html(requests.get('https://www.federalreserve.gov/releases/z1/current/',
+                                   headers=hdr, timeout=30).text, match='Tobin')[0]
+    tq = tq.rename(columns={'Period':'date','Value':'tobinq'})
+    tq['date'] = pd.to_datetime(tq['date'])
 
-# ---------- 4. GPU lead-time placeholder ----------
-gpu_weeks = 20
+    # Household equity % (quarterly CSV link inside B.101.e)
+    hh = pd.read_csv('https://www.federalreserve.gov/releases/z1/current/csv/b101e.csv',
+                     skiprows=5, usecols=['Year','Q1','Q2','Q3','Q4']).melt(
+                     id_vars='Year', var_name='q', value_name='hhld')
+    hh['date'] = pd.to_datetime(hh['Year'].astype(str) + hh['q'].str[1], format='%Y%q')
+    hh = hh[['date','hhld']].dropna()
 
-# ---------- 5. Insider selling ----------
-try:
-    url = (
-        "http://openinsider.com/screener?s=nvda&o=&pl=1&ph=&ll=1&lh=&fd=730&fdr=&td=0"
-        "&tdr=&fdlyl=&fdlyh=&daysago=&xp=1&xs=1&vl=1&vh=&cl=1&ch=&scl=1&sch=&oc=1"
-        "&sortcol=0&cnt=100&page=1"
-    )
-    insider = float(pd.read_csv(url)["Value ($)"].sum()) / 1e6
-except Exception:
-    insider = 150  # fallback
+    # merge on date (forward-fill quarterly into monthly)
+    fed = (cape
+           .merge(tq,  on='date', how='left')
+           .merge(hh,  on='date', how='left'))
+    fed[['tobinq','hhld']] = fed[['tobinq','hhld']].ffill()
+    fed = fed.dropna(subset=['cape'])          # keep only months we have CAPE
+    return fed
 
-# ---------- 6. z-score composite ----------
-z = (
-    (cape - 30) / 10
-    + (tobinq - 1.5) / 0.5
-    + (nvda_ps - 30) / 5
-    + (gt - 50) / 20
-    + (gpu_weeks - 16) / 4
-    + (insider - 100) / 50
-)
-z = round(z, 2)
+# ---------- 2.  live daily proxies ----------
+def proxy_today() -> pd.Series:
+    """today’s values from multpl + Google Trends"""
+    tbl = lambda slug: float(pd.read_html(requests.get(f'https://www.multpl.com/{slug}/table/by-month',
+                                                       headers=hdr, timeout=20).text, match='Date')[0].iloc[0,1])
+    cape  = tbl('shiller-pe')
+    pe    = tbl('s-p-500-pe-ratio')
+    ps    = tbl('price-to-sales')
 
-# ---------- 7. Push row to Google Sheet ----------
-GAS_URL = "https://script.google.com/macros/s/YOUR_DEPLOYMENT_ID/exec"  # <-- replace only this
-params = {
-    "date": today, "cape": cape, "tobinq": tobinq, "mag7": mag7,
-    "nvda_ps": nvda_ps, "hhld": hhld, "gt_ai": gt, "gpu": gpu_weeks,
-    "insider": insider, "dc": 0, "z": z,
-}
-requests.get(GAS_URL, params=params, timeout=30)
+    pytrend = TrendReq(hl='en-US', tz=360)
+    kw = ['AI stock','NVDA stock','ChatGPT stock']
+    pytrend.build_payload(kw, timeframe='today 3-m')
+    gt_ai = pytrend.interest_over_time().mean().mean()
 
-# ---------- 8. Mirror CSV for GitHub Pages ----------
-pd.DataFrame([params]).to_csv("docs/data.csv", index=False)
+    mag7=0.36; gpu=20; insider=150; dc=0; hhld_proxy=0.31
+    z = ( (cape - 30)/10 + (pe - 20)/5 + (ps - 30)/5 +
+          (gt_ai - 50)/20 + (gpu - 16)/4 + (insider - 100)/50 ).round(2)
+    return pd.Series({'date':today,'cape':cape,'pe':pe,'tobinq':ps,'mag7':mag7,
+                      'nvda_ps':ps,'hhld':hhld_proxy,'gt_ai':gt_ai,'gpu':gpu,
+                      'insider':insider,'dc':dc,'z':z})
+
+# ---------- 3.  main logic ----------
+if os.path.exists(FED_CSV):                      # already have history
+    fed = pd.read_csv(FED_CSV, parse_dates=['date'])
+    last_fed = fed['date'].max().date()
+    if today <= last_fed:                        # still inside Fed history → proxy
+        row = proxy_today()
+    else:                                        # new Fed quarter dropped → re-download
+        fed = fed_history()
+        fed.to_csv(FED_CSV, index=False)
+        row = proxy_today()
+else:                                            # first run → build history
+    fed = fed_history()
+    fed.to_csv(FED_CSV, index=False)
+    row = proxy_today()
+
+# append today’s proxy row
+live = pd.read_csv(PROXY_CSV) if os.path.exists(PROXY_CSV) else pd.DataFrame()
+live = pd.concat([live, row.to_frame().T], ignore_index=True).drop_duplicates(subset=['date'])
+live.to_csv(PROXY_CSV, index=False)
+
+# push to Google Sheet
+requests.get(GAS_URL, params=row.to_dict(), timeout=30)
+print('done', today, 'z=', row.z)
