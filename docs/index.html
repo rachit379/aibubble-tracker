@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>AI Bubble Tracker – free</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    body{font-family:Arial,Helvetica,sans-serif;margin:0 auto;max-width:900px;padding:2rem}
+    h2{text-align:center}
+  </style>
+</head>
+<body>
+  <h2>AI Bubble Composite z-score</h2>
+  <canvas id="myChart" height="120"></canvas>
+  <p style="text-align:center">
+    <span style="color:green">■</span> Green ≤1 σ
+    <span style="color:orange">■</span> Amber 1-2 σ
+    <span style="color:red">■</span> Red &gt;2 σ
+  </p>
+  <script>
+  fetch('data.csv?'+Date.now())
+    .then(r=>r.text())
+    .then(txt=>{
+      const [head,...rows] = txt.trim().split('\n');
+      const labels = rows.map(r=>r.split(',')[0]);
+      const data   = rows.map(r=>parseFloat(r.split(',')[10]));
+      new Chart(document.getElementById('myChart'),{
+        type:'line',
+        data:{
+          labels:labels,
+          datasets:[{
+            label:'Composite z-score',
+            data:data,
+            segment:{borderColor:ctx=>ctx.p0.parsed.y>2?'red':ctx.p0.parsed.y>1?'orange':'green'},
+            tension:0.3,
+            fill:false,
+            pointRadius:3
+          }]
+        },
+        options:{scales:{y:{min:-5,max:+5}}}
+      });
+    });
+  </script>
+</body>
+</html>
