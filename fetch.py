@@ -4,12 +4,12 @@ import datetime as dt
 from pytrends.request import TrendReq
 
 today = dt.date.today().isoformat()
-
 # ---------- 1. FRED (JSON API – no key needed for < 50 calls/day) ----------
 def fred(series: str) -> float:
+    API_KEY = "c63f4de89b61c8ee0b910235aebbadc1"
     url = (
-        "https://api.stlouisfed.org/fred/series/observations"
-        f"?series_id={series}&api_key=&file_type=json&limit=1&sort_order=desc"
+        f'https://api.stlouisfed.org/fred/series/observations'
+           f'?series_id={series}&api_key={API_KEY}&file_type=json&limit=1&sort_order=desc'
     )
     return float(requests.get(url, timeout=20).json()["observations"][0]["value"])
 
